@@ -1,21 +1,23 @@
 from __future__ import annotations
 
+import logging
 import time
 from typing import Optional
 
 from PySide6.QtCore import QDateTime, QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QIcon, QKeySequence
-from PySide6.QtWidgets import (QHBoxLayout, QInputDialog, QLabel, QListWidget, QListWidgetItem, QMainWindow,
-                               QMenu, QMessageBox, QProgressBar, QPushButton, QSplitter, QToolButton,
+from PySide6.QtWidgets import (QApplication, QHBoxLayout, QInputDialog, QLabel, QListWidget, QListWidgetItem,
+                               QMainWindow, QMenu, QMessageBox, QProgressBar, QPushButton, QSplitter,
                                QVBoxLayout, QWidget)
 
 from ..store import Store
 from ..worker import Worker
-from .dialogs import SettingsDialog, parse_handle
+from .dialogs import parse_handle
 from .feed_view import FeedView
 from .post_widget import avatar, forget_avatar
 
 ALL = "\x00all"
+STARTUP_REFRESH_HOURS = 6  # on start / reopen, check accounts not checked for this long
 
 
 class MainWindow(QMainWindow):
@@ -27,6 +29,8 @@ class MainWindow(QMainWindow):
         self.adding: set[str] = set()
         self.older_failed_at: dict[Optional[str], float] = {}
         self.last_error: Optional[str] = None
+        self.hidden_since_start = False  # started with --background, never shown yet
+        self._quitting = False
         self.setWindowTitle("IGReader" + (" — offline demo data" if fake else ""))
         self.resize(1000, 900)
 
@@ -50,24 +54,15 @@ class MainWindow(QMainWindow):
         sl.addLayout(side_btns)
 
         # toolbar
-        self.refresh_btn = QToolButton()
-        self.refresh_btn.setText("⟳ Refresh")
-        self.refresh_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
-        self.refresh_btn.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
-        self.refresh_btn.clicked.connect(lambda: self.refresh(force=False))
-        menu = QMenu(self)
-        menu.addAction("Refresh accounts not checked within the interval", lambda: self.refresh(False))
-        menu.addAction("Force refresh all accounts", lambda: self.refresh(True))
-        menu.addAction("Force refresh selected account", self.refresh_selected)
-        self.refresh_btn.setMenu(menu)
-        sess = QPushButton("Settings…")
-        sess.clicked.connect(self.settings_dialog)
         self.view_title = QLabel()
         self.view_title.setStyleSheet("font-size:16px; font-weight:600;")
         top = QHBoxLayout()
         top.addWidget(self.view_title, 1)
-        top.addWidget(self.refresh_btn)
-        top.addWidget(sess)
+        quit_btn = QPushButton("Force quit")
+        quit_btn.setToolTip("Quit completely (stop background checks). Closing the window keeps "
+                            "checking for new posts in the background.")
+        quit_btn.clicked.connect(self.quit_app)
+        top.addWidget(quit_btn)
 
         # banner
         self.banner = QLabel()
@@ -107,6 +102,10 @@ class MainWindow(QMainWindow):
         rm.setShortcut(QKeySequence.StandardKey.Delete)
         rm.triggered.connect(self.remove_account)
         self.list.addAction(rm)
+        q = QAction(self)
+        q.setShortcut(QKeySequence.StandardKey.Quit)
+        q.triggered.connect(self.quit_app)
+        self.addAction(q)
 
         w = worker
         w.postsChanged.connect(self._posts_changed)
@@ -116,7 +115,7 @@ class MainWindow(QMainWindow):
         w.status.connect(self.status.setText)
         w.failed.connect(self._failed)
         w.cooldownChanged.connect(self.update_banner)
-        w.idle.connect(lambda idle: idle and self.feed.check_more())
+        w.idle.connect(lambda idle: idle and self.isVisible() and self.feed.check_more())
 
         self.populate()
         self.list.setCurrentRow(0)
@@ -231,42 +230,29 @@ class MainWindow(QMainWindow):
         self.populate()
         self.feed.set_source(None)
 
-    def refresh(self, force: bool):
-        if not self._can_fetch(explain=True):
-            return
-        hours = float(self.store.settings.get("refresh_hours", 6))
-        now = time.time()
-        due = [a.username for a in self.store.accounts()
-               if force or not a.last_refresh_at or now - a.last_refresh_at >= hours * 3600]
-        if not due:
-            self.status.setText(f"All accounts were checked within the last {hours:g} h — nothing to do "
-                                "(use Force refresh to override).")
-            return
-        self.worker.refresh(due)
-
     def refresh_selected(self):
         u = self.current_username()
         if u and self._can_fetch(explain=True):
             self.worker.refresh([u])
 
     def startup_refresh(self):
-        if self.store.accounts() and self._can_fetch(explain=False):
-            self.refresh(force=False)
-
-    def settings_dialog(self):
-        d = SettingsDialog(self.store, self)
-        if d.exec() and d.ua_changed:
-            self.worker.reset_client()
+        """On start / reopen: check accounts not checked within STARTUP_REFRESH_HOURS."""
+        if not self.store.accounts() or not self._can_fetch(explain=False):
+            return
+        now = time.time()
+        due = [a.username for a in self.store.accounts()
+               if not a.last_refresh_at or now - a.last_refresh_at >= STARTUP_REFRESH_HOURS * 3600]
+        if due:
+            self.worker.refresh(due)
 
     # --- worker events ------------------------------------------------------------------
     def _posts_changed(self, username: str):
-        if self.feed.username in (None, username):
+        if self.isVisible() and self.feed.username in (None, username):
             self.feed.schedule_reload()
 
     def _progress(self, done: int, total: int, text: str):
         if total <= 0:
             self.bar.hide()
-            self.refresh_btn.setEnabled(True)
             return
         self.bar.setRange(0, total)
         self.bar.setValue(done)
@@ -281,16 +267,17 @@ class MainWindow(QMainWindow):
                 if u in msg or kind == "paused":
                     self.adding.discard(u)
             self.populate()
-        if kind == "account" and not self.worker.is_pending("refresh", None):
+        if kind == "account" and self.isVisible() and not self.worker.is_pending("refresh", None):
             QMessageBox.warning(self, "Instagram", msg)
         if kind in ("other", "network"):
             self.older_failed_at[self.feed.username] = time.time()
             self.status.setText(f"⚠ {msg}")
         self.update_banner()
-        self.feed.reload()
+        if self.isVisible():
+            self.feed.reload()
 
     def _need_older(self, username: Optional[str]):
-        if not self._can_fetch(explain=False):
+        if not self.isVisible() or not self._can_fetch(explain=False):
             return
         if time.time() - self.older_failed_at.get(username, 0) < 120:
             return
@@ -341,7 +328,32 @@ class MainWindow(QMainWindow):
                 self.update_banner()
                 self.feed.reload()
 
+    # --- window lifecycle -----------------------------------------------------------
+    def bring_to_front(self):
+        was_hidden = not self.isVisible()
+        first = self.hidden_since_start
+        self.hidden_since_start = False
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+        if was_hidden:
+            self.populate()
+            self.feed.reload()
+            self.update_banner()
+            QTimer.singleShot(1500 if first else 500, self.startup_refresh)
+
+    def quit_app(self):
+        self._quitting = True
+        self.close()
+
     def closeEvent(self, e):
+        if not self._quitting:
+            e.ignore()
+            self.hide()
+            self.feed.set_source(self.feed.username)  # drop post widgets / images while hidden
+            logging.getLogger("igreader").info("window closed; checking in the background")
+            return
+        self._quitting = True
         self.status.setText("Stopping…")
-        self.worker.shutdown()
         super().closeEvent(e)
+        QApplication.quit()  # aboutToQuit stops the worker

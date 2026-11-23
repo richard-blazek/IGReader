@@ -85,10 +85,6 @@ class Worker(QThread):
     def is_pending(self, kind: str, username: Optional[str]) -> bool:
         return (kind, username) in self.pending
 
-    def reset_client(self) -> None:
-        """After settings changed (user agent): rebuild the client on the next job."""
-        self.q.put(Job(-1, next(self.seq), "reset"))
-
     def shutdown(self) -> None:
         self.throttle.stop()
         self.q.put(Job(-2, next(self.seq), "quit"))
@@ -107,7 +103,7 @@ class Worker(QThread):
                 from .fake_client import FakeClient
                 self._client = FakeClient(self.throttle, self.store.root)
             else:
-                self._client = AnonClient(self.throttle, self.store.settings.get("user_agent"))
+                self._client = AnonClient(self.throttle)
         return self._client
 
     def _drop_queued(self) -> None:
@@ -115,7 +111,7 @@ class Worker(QThread):
         try:
             while True:
                 j = self.q.get_nowait()
-                if j.kind in ("quit", "reset"):
+                if j.kind == "quit":
                     self.q.put(j)
                     break
                 self.pending.discard((j.kind, j.username))
@@ -144,9 +140,6 @@ class Worker(QThread):
                 continue
             if job.kind == "quit":
                 return
-            if job.kind == "reset":
-                self._client = None
-                continue
             if not busy:
                 busy = True
                 self.idle.emit(False)

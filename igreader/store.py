@@ -1,7 +1,7 @@
 """Plain-text (JSON) storage of accounts, posts and app state, plus an in-memory index.
 
 Layout under the data dir:
-    state.json                       global state: cooldown, settings
+    state.json                       global state: cooldown
     accounts.json                    ordered list of followed usernames
     accounts/<username>/account.json per-account fetch state
     accounts/<username>/profile.jpg
@@ -181,12 +181,6 @@ class Account:
         return all(s.complete for s in self.streams.values())
 
 
-DEFAULT_SETTINGS = {
-    "refresh_hours": 6,
-    "user_agent": None,  # None = instaloader's default desktop UA
-}
-
-
 class Store:
     def __init__(self, root: Path):
         self.root = root
@@ -211,7 +205,6 @@ class Store:
     def load(self) -> None:
         with self.lock:
             st = read_json(self.root / "state.json", {}) or {}
-            st["settings"] = {**DEFAULT_SETTINGS, **(st.get("settings") or {})}
             self.state = st
             self._order = list(read_json(self.root / "accounts.json", []) or [])
             self._accounts.clear()
@@ -238,10 +231,6 @@ class Store:
     def save_state(self) -> None:
         with self.lock:
             write_json(self.root / "state.json", self.state)
-
-    @property
-    def settings(self) -> dict:
-        return self.state["settings"]
 
     # --- cooldown -----------------------------------------------------------
     COOLDOWNS = (3600, 6 * 3600, 24 * 3600)

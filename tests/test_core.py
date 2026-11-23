@@ -315,3 +315,78 @@ def test_graphql_rate_limit_is_a_block():
     assert e.value.kind == "block"
     import instaloader.exceptions as ex
     assert classify(ex.BadResponseException("x")).kind == "block"
+
+
+# --- background checks ---------------------------------------------------------------------
+
+class FakeWorker:
+    def __init__(self):
+        self.pending = set()
+        self.calls = []
+
+    def refresh(self, usernames):
+        self.calls.append(list(usernames))
+        return len(usernames)
+
+
+def _local(y, mo, d, h, mi=0):
+    return time.mktime((y, mo, d, h, mi, 0, 0, 0, -1))
+
+
+@pytest.fixture
+def bg(tmp_path):
+    from PySide6.QtCore import QCoreApplication
+    from igreader import background
+    QCoreApplication.instance() or QCoreApplication([])
+    store = Store(tmp_path)
+    clock = {"t": _local(2026, 6, 10, 12)}
+    net = {"online": True}
+    worker = FakeWorker()
+    sched = background.BackgroundScheduler(store, worker, now=lambda: clock["t"], online=lambda: net["online"])
+    return store, worker, sched, clock, net
+
+
+def test_background_check_respects_schedule(bg):
+    from igreader import background
+    store, worker, sched, clock, net = bg
+    noon = clock["t"]
+    store.add_account(Account("fresh", last_refresh_at=int(noon - 3600)))
+    store.add_account(Account("stale", last_refresh_at=int(noon - 5 * 3600)))
+    store.add_account(Account("never"))
+    assert sched.tick() is None  # first gap after start not over yet
+    sched.next_at = noon
+    net["online"] = False
+    assert sched.tick() is None
+    net["online"] = True
+    store.start_cooldown("x")
+    assert sched.tick() is None
+    store.clear_cooldown_level()
+    worker.pending.add(("older", None))
+    assert sched.tick() is None
+    worker.pending.clear()
+    assert sched.tick() == 2
+    assert worker.calls == [["stale", "never"]]
+    lo, hi = background.GAP
+    assert noon + lo <= sched.next_at <= noon + hi
+    assert sched.tick() is None  # not again right away
+
+
+def test_background_check_only_in_daytime(bg):
+    store, worker, sched, clock, net = bg
+    store.add_account(Account("a"))
+    sched.next_at = 0
+    for h in (23, 2, 6):
+        clock["t"] = _local(2026, 6, 10, h, 30)
+        assert sched.tick() is None
+    clock["t"] = _local(2026, 6, 10, 8, 50)  # after the max. morning jitter
+    assert sched.tick() == 1
+
+
+def test_autostart_entry(tmp_path, monkeypatch):
+    from igreader import background
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    background.install_autostart()
+    text = background.autostart_file().read_text()
+    assert "--background" in text and "Exec=" in text
+    background.install_autostart()  # idempotent
+    assert background.autostart_file().read_text() == text
