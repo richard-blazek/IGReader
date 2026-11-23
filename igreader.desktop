@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=IGReader
+Comment=View posts of selected public Instagram accounts
+Exec=/home/richard/Dokumenty/Programy/IGReader/.venv/bin/igreader
+Icon=camera-photo
+Terminal=false
+Categories=Network;Viewer;
+StartupWMClass=igreader

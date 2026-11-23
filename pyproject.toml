@@ -1,0 +1,23 @@
+[project]
+name = "igreader"
+version = "0.1.0"
+description = "Desktop viewer for posts of selected public Instagram accounts, with a local cache"
+requires-python = ">=3.11"
+dependencies = [
+    "PySide6>=6.7",
+    "instaloader>=4.16,<4.17",
+    "requests",
+]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.gui-scripts]
+igreader = "igreader.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["igreader*"]
