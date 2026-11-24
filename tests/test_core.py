@@ -46,13 +46,15 @@ def all_posts_of(client, username):
 
 def test_store_roundtrip_and_remove(tmp_path):
     s = Store(tmp_path)
-    s.add_account(Account("alice", user_id="1", full_name="Alice", added_at=100))
+    s.add_account(Account("alice", user_id="1", full_name="Alice", added_at=100,
+                          biography="Bio", bio_links=["https://a.example"]))
     post = Post("abc", "alice", 1_700_000_000, "hi ✨", False, 5,
                 [MediaItem(0, "image", "media/abc_0.jpg", None, 1080, 1080)])
     assert s.save_post(post)
     s2 = Store(tmp_path)
     assert s2.get_post("abc") == post
     assert s2.account("alice").full_name == "Alice"
+    assert (s2.account("alice").biography, s2.account("alice").bio_links) == ("Bio", ["https://a.example"])
     raw = (tmp_path / "accounts/alice/posts/abc.json").read_text(encoding="utf-8")
     assert '"taken_at": "2023-11-14T22:13:20Z"' in raw and "✨" in raw  # human readable
     s2.remove_account("alice")
@@ -273,10 +275,12 @@ def test_anon_client_reuses_profile_page_and_paginates(monkeypatch):
     def page_data(path):
         pages.append(path)
         return [{"xig_user_by_username": {"pk": "42", "id": "PAGEID", "username": "someone", "full_name": "S",
+                                          "biography": "Hi #there", "bio_links": [{"url": "https://x.org", "lynx_url": "l"}],
                                           "is_private": False, "polaris_ordered_timeline_connection": conn}}]
     monkeypatch.setattr(c.ctx, "get_page_data", page_data)
     info = c.resolve_profile("someone")
     assert (info.user_id, info.page_id) == ("42", "PAGEID")
+    assert (info.biography, info.bio_links) == ("Hi #there", ["https://x.org"])
     acc = Account("someone", user_id=info.user_id, page_id=info.page_id)
     first = c.posts_page(acc, None)
     assert pages == ["someone/"]  # first page reused from the profile page request

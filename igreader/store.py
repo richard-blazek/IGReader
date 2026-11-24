@@ -113,6 +113,8 @@ class Account:
     user_id: str = ""
     page_id: str = ""  # logged-out profile page id, used for pagination
     full_name: str = ""
+    biography: str = ""
+    bio_links: list[str] = field(default_factory=list)
     added_at: int = 0
     last_refresh_at: Optional[int] = None
     last_error: Optional[str] = None
@@ -129,6 +131,8 @@ class Account:
             "user_id": self.user_id,
             "page_id": self.page_id,
             "full_name": self.full_name,
+            "biography": self.biography,
+            "bio_links": self.bio_links,
             "added_at": _iso(self.added_at),
             "last_refresh_at": _iso(self.last_refresh_at),
             "last_error": self.last_error,
@@ -149,6 +153,8 @@ class Account:
             user_id=str(d.get("user_id") or ""),
             page_id=str(d.get("page_id") or ""),
             full_name=d.get("full_name") or "",
+            biography=d.get("biography") or "",
+            bio_links=list(d.get("bio_links") or []),
             added_at=_ts(d.get("added_at")) or 0,
             last_refresh_at=_ts(d.get("last_refresh_at")),
             last_error=d.get("last_error"),

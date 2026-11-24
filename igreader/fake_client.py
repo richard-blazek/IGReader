@@ -98,7 +98,9 @@ class FakeClient:
         uid = str(_h(username) % 10**10)
         self._fresh_first_page.add(username)  # like the real profile page, it embeds page 1
         return ProfileInfo(username, uid, username.replace("_", " ").title(),
-                           username.startswith("private"), f"fake://avatar/{username}", page_id="p" + uid)
+                           username.startswith("private"), f"fake://avatar/{username}", page_id="p" + uid,
+                           biography=f"Fake profile of @{username} 📷\n#fake #demo",
+                           bio_links=["https://example.com/"])
 
     def posts_page(self, acc, cursor) -> Page:
         """Like the logged-out API: only shortcodes, no metadata, no pin flags."""

@@ -152,7 +152,8 @@ class Fetcher:
         if info.is_private:
             raise IGError("account", f"@{info.username} is private")
         acc = Account(info.username, user_id=info.user_id, page_id=info.page_id,
-                      full_name=info.full_name, added_at=int(time.time()))
+                      full_name=info.full_name, biography=info.biography, bio_links=info.bio_links,
+                      added_at=int(time.time()))
         self.store.add_account(acc)
         self.events.accounts_changed()
         if info.pic_url:

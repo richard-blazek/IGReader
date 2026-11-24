@@ -115,11 +115,6 @@ class PostWidget(QFrame):
             head.addWidget(reel)
         head.addStretch(1)
         head.addWidget(date)
-        kind = "reel" if post.is_reel else "p"
-        link = QLabel(f'<a href="https://www.instagram.com/{kind}/{post.shortcode}/">↗</a>')
-        link.setOpenExternalLinks(True)
-        link.setToolTip("Open on Instagram")
-        head.addWidget(link)
 
         self.media = MediaViewer(post.media, account_dir)
 

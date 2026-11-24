@@ -64,6 +64,13 @@ class ProfileInfo:
     is_private: bool
     pic_url: Optional[str]
     page_id: str = ""  # the profile page's "id" (not the user id), used for pagination
+    biography: str = ""
+    bio_links: list[str] = field(default_factory=list)
+
+
+def _bio(user: dict) -> tuple[str, list[str]]:
+    links = [str(l["url"]) for l in user.get("bio_links") or [] if isinstance(l, dict) and l.get("url")]
+    return user.get("biography") or "", links
 
 
 class IGError(Exception):
@@ -272,6 +279,8 @@ class AnonClient:
             is_private=bool(user.get("is_private")),
             pic_url=user.get("profile_pic_url_hd") or user.get("profile_pic_url"),
             page_id=str(user.get("id") or ""),
+            biography=_bio(user)[0],
+            bio_links=_bio(user)[1],
         )
 
     @staticmethod
@@ -296,6 +305,7 @@ class AnonClient:
                 if user.get("is_private"):
                     raise IGError("account", f"@{username} is private")
                 acc.page_id = str(user.get("id") or acc.page_id)
+                acc.biography, acc.bio_links = _bio(user)
                 cached = self._first_pages.pop(username, None)
                 if cached is None:
                     raise IGError("other", f"The profile page of @{username} contained no posts")
