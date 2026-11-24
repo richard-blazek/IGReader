@@ -4,8 +4,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import QPoint, QSize, Qt, QUrl, Signal
-from PySide6.QtGui import QColor, QImageReader, QPainter, QPixmap, QPolygon
+from PySide6.QtCore import QPoint, QRect, QSize, Qt, QUrl, Signal
+from PySide6.QtGui import QColor, QImage, QImageReader, QPainter, QPixmap, QPolygon
 from PySide6.QtWidgets import (QHBoxLayout, QLabel, QPushButton, QSizePolicy, QSlider, QStackedLayout,
                                QVBoxLayout, QWidget)
 
@@ -65,6 +65,41 @@ class ClickLabel(QLabel):
         super().mousePressEvent(e)
 
 
+class VideoView(QWidget):
+    """Paints decoded frames itself, letterboxed. Deliberately not QVideoWidget: that one renders
+    through a native GL child window, which on Wayland (GNOME) can stall waiting for frame
+    callbacks and freeze the whole window."""
+    clicked = Signal()
+
+    def __init__(self, size: QSize, parent=None):
+        super().__init__(parent)
+        from PySide6.QtMultimedia import QVideoSink
+        self.setFixedSize(size)
+        self.img = QImage()
+        self.sink = QVideoSink(self)
+        self.sink.videoFrameChanged.connect(self._frame)
+
+    def _frame(self, frame):
+        img = frame.toImage()
+        if not img.isNull():
+            self.img = img
+            self.update()
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.fillRect(self.rect(), QColor("#111"))
+        if not self.img.isNull():
+            p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+            s = self.img.size().scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatio)
+            p.drawImage(QRect(QPoint((self.width() - s.width()) // 2, (self.height() - s.height()) // 2), s),
+                        self.img)
+        p.end()
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+
+
 class VideoPlayer(QWidget):
     """Created on demand when a video is played; one active player app-wide."""
     active: Optional["VideoPlayer"] = None
@@ -72,15 +107,13 @@ class VideoPlayer(QWidget):
     def __init__(self, path: Path, size: QSize, parent=None):
         super().__init__(parent)
         from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
-        from PySide6.QtMultimediaWidgets import QVideoWidget
 
-        self.video = QVideoWidget(self)
-        self.video.setFixedSize(size)
+        self.video = VideoView(size, self)
         self.audio = QAudioOutput(self)
         self.audio.setMuted(True)
         self.player = QMediaPlayer(self)
         self.player.setAudioOutput(self.audio)
-        self.player.setVideoOutput(self.video)
+        self.player.setVideoSink(self.video.sink)
         self.player.setSource(QUrl.fromLocalFile(str(path)))
         self.player.setLoops(QMediaPlayer.Loops.Infinite)
 
@@ -108,7 +141,7 @@ class VideoPlayer(QWidget):
         lay.setSpacing(0)
         lay.addWidget(self.video)
         lay.addLayout(bar)
-        self.video.mousePressEvent = lambda e: self.toggle()
+        self.video.clicked.connect(self.toggle)
 
     def start(self):
         if VideoPlayer.active is not None and VideoPlayer.active is not self:
