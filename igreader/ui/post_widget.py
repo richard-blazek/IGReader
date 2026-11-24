@@ -95,6 +95,59 @@ class CaptionLabel(QLabel):
         return self.sizeHint()
 
 
+def _header(username: str, account_dir: Path, on_author: Callable[[str], None]) -> QHBoxLayout:
+    """Avatar and clickable @handle; callers append further widgets."""
+    head = QHBoxLayout()
+    head.setContentsMargins(8, 6, 8, 6)
+    pic = QLabel()
+    pic.setPixmap(avatar(account_dir / "profile.jpg", 32))
+    pic.setFixedSize(32, 32)
+    handle = QPushButton(f"@{username}")
+    handle.setFlat(True)
+    handle.setCursor(Qt.CursorShape.PointingHandCursor)
+    handle.setStyleSheet("font-weight:600; text-align:left; padding:0 4px;")
+    handle.clicked.connect(lambda: on_author(username))
+    head.addWidget(pic)
+    head.addWidget(handle)
+    return head
+
+
+def _caption(rich: str, on_account: Callable[[str], None]) -> CaptionLabel:
+    cap = CaptionLabel(rich)
+    cap.setTextFormat(Qt.TextFormat.RichText)
+    cap.setWordWrap(True)
+    cap.linkActivated.connect(lambda href: open_link(href, on_account))
+    cap.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+    cap.setContentsMargins(10, 4, 10, 0)
+    cap.setFixedWidth(WIDTH)
+    return cap
+
+
+def bio_html(biography: str, links: list[str], tracked: Callable[[str], bool]) -> str:
+    parts = [caption_html(biography, tracked)] if biography else []
+    parts += [f'<a href="{html.escape(url)}">{_breakable(url)}</a>' for url in links]
+    return "<br>".join(parts)
+
+
+class BioWidget(QFrame):
+    """The profile bio, shown like a post (no date, no media) at the top of an account's feed."""
+    authorClicked = Signal(str)
+
+    def __init__(self, username: str, rich: str, account_dir: Path, parent=None):
+        super().__init__(parent)
+        self.rich = rich
+        self.setObjectName("post")
+        self.setFrameShape(QFrame.Shape.StyledPanel)
+        self.setFixedWidth(WIDTH + 2)
+        head = _header(username, account_dir, self.authorClicked.emit)
+        head.addStretch(1)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 8)
+        lay.setSpacing(4)
+        lay.addLayout(head)
+        lay.addWidget(_caption(rich, self.authorClicked.emit))
+
+
 class PostWidget(QFrame):
     authorClicked = Signal(str)
 
@@ -105,21 +158,10 @@ class PostWidget(QFrame):
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self.setFixedWidth(WIDTH + 2)
 
-        head = QHBoxLayout()
-        head.setContentsMargins(8, 6, 8, 6)
-        pic = QLabel()
-        pic.setPixmap(avatar(account_dir / "profile.jpg", 32))
-        pic.setFixedSize(32, 32)
-        handle = QPushButton(f"@{post.username}")
-        handle.setFlat(True)
-        handle.setCursor(Qt.CursorShape.PointingHandCursor)
-        handle.setStyleSheet("font-weight:600; text-align:left; padding:0 4px;")
-        handle.clicked.connect(lambda: self.authorClicked.emit(post.username))
+        head = _header(post.username, account_dir, self.authorClicked.emit)
         when = QDateTime.fromSecsSinceEpoch(post.taken_at).toString("d MMMM yyyy  HH:mm")
         date = QLabel(when)
         date.setStyleSheet("color:#888;")
-        head.addWidget(pic)
-        head.addWidget(handle)
         if post.is_reel:
             reel = QLabel("Reel")
             reel.setStyleSheet("color:#888; font-size:11px; border:1px solid #888; border-radius:3px; padding:0 3px;")
@@ -135,14 +177,7 @@ class PostWidget(QFrame):
         lay.addLayout(head)
         lay.addWidget(self.media)
         if post.caption:
-            cap = CaptionLabel(caption_html(post.caption, tracked))
-            cap.setTextFormat(Qt.TextFormat.RichText)
-            cap.setWordWrap(True)
-            cap.linkActivated.connect(lambda href: open_link(href, self.authorClicked.emit))
-            cap.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
-            cap.setContentsMargins(10, 4, 10, 0)
-            cap.setFixedWidth(WIDTH)
-            lay.addWidget(cap)
+            lay.addWidget(_caption(caption_html(post.caption, tracked), self.authorClicked.emit))
 
     def load(self):
         self.media.load()

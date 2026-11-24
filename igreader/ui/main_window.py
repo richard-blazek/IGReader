@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import html
 import logging
 import time
 from typing import Optional
@@ -15,7 +14,7 @@ from ..store import Store
 from ..worker import Worker
 from .dialogs import parse_handle
 from .feed_view import FeedView
-from .post_widget import avatar, caption_html, forget_avatar, open_link
+from .post_widget import avatar, forget_avatar
 
 ALL = "\x00all"
 STARTUP_REFRESH_HOURS = 6  # on start / reopen, check accounts not checked for this long
@@ -55,13 +54,8 @@ class MainWindow(QMainWindow):
         sl.addLayout(side_btns)
 
         # toolbar
-        self.bio = QLabel()
-        self.bio.setTextFormat(Qt.TextFormat.RichText)
-        self.bio.setWordWrap(True)
-        self.bio.linkActivated.connect(lambda href: open_link(href, self.select_account))
-        self.bio.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
         top = QHBoxLayout()
-        top.addWidget(self.bio, 1)
+        top.addStretch(1)
         quit_btn = QPushButton("Force quit")
         quit_btn.setToolTip("Quit completely (stop background checks). Closing the window keeps "
                             "checking for new posts in the background.")
@@ -165,7 +159,7 @@ class MainWindow(QMainWindow):
             self.list.addItem(it)
         self.list.setCurrentRow(select)
         self.list.blockSignals(False)
-        self._show_bio()
+        self.feed.update_bio()
         if (ALL if self.feed.username is None else self.feed.username) != (self.current_username() or ALL):
             self._select()
 
@@ -184,17 +178,8 @@ class MainWindow(QMainWindow):
 
     def _select(self, *_):
         u = self.current_username()
-        self._show_bio()
         if self.feed.username != u or not self.feed.shown:
             self.feed.set_source(u)
-
-    def _show_bio(self):
-        u = self.current_username()
-        acc = self.store.account(u) if u else None
-        tracked = lambda name: self.store.account(name) is not None  # noqa: E731
-        parts = [caption_html(acc.biography, tracked)] if acc and acc.biography else []
-        parts += [f'<a href="{html.escape(url)}">{html.escape(url)}</a>' for url in (acc.bio_links if acc else [])]
-        self.bio.setText("<br>".join(parts))
 
     def _context_menu(self, pos):
         it = self.list.itemAt(pos)

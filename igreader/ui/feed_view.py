@@ -7,7 +7,7 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import QLabel, QScrollArea, QVBoxLayout, QWidget
 
 from ..store import Store
-from .post_widget import PostWidget
+from .post_widget import BioWidget, PostWidget, bio_html
 
 BATCH = 15
 
@@ -26,6 +26,7 @@ class FeedView(QScrollArea):
         self.shown: list[str] = []
         self.order: list[str] = []
         self.complete = False
+        self.bio: Optional[BioWidget] = None  # the account's bio, shown as the first "post"
 
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -56,8 +57,27 @@ class FeedView(QScrollArea):
             w.deleteLater()
         self.widgets.clear()
         self.shown = []
+        self.update_bio()
         self.verticalScrollBar().setValue(0)
         self.reload()
+
+    def update_bio(self) -> None:
+        """Show the current account's bio (if any) above its posts; rebuilt only when it changed."""
+        acc = self.store.account(self.username) if self.username else None
+        tracked = lambda u: self.store.account(u) is not None  # noqa: E731
+        rich = bio_html(acc.biography, acc.bio_links, tracked) if acc else ""
+        if self.bio and self.bio.rich == rich and self.bio.property("user") == self.username:
+            return
+        if self.bio:
+            self.lay.removeWidget(self.bio)
+            self.bio.hide()
+            self.bio.deleteLater()
+            self.bio = None
+        if rich:
+            self.bio = BioWidget(self.username, rich, self.store.account_dir(self.username))
+            self.bio.setProperty("user", self.username)
+            self.bio.authorClicked.connect(self.authorClicked)
+            self.lay.insertWidget(0, self.bio, 0, Qt.AlignmentFlag.AlignHCenter)
 
     def schedule_reload(self) -> None:
         if not self._reload_timer.isActive():
@@ -87,6 +107,7 @@ class FeedView(QScrollArea):
                 if w and w.y() + w.height() > bar.value():
                     anchor, offset = sc, w.y() - bar.value()
                     break
+        off = 1 if self.bio else 0
         tset = set(target)
         for sc in list(self.widgets):
             post = by_sc.get(sc)
@@ -105,10 +126,10 @@ class FeedView(QScrollArea):
                                lambda u: self.store.account(u) is not None)
                 w.authorClicked.connect(self.authorClicked)
                 self.widgets[sc] = w
-                self.lay.insertWidget(i, w, 0, Qt.AlignmentFlag.AlignHCenter)
-            elif self.lay.indexOf(w) != i:
+                self.lay.insertWidget(i + off, w, 0, Qt.AlignmentFlag.AlignHCenter)
+            elif self.lay.indexOf(w) != i + off:
                 self.lay.removeWidget(w)
-                self.lay.insertWidget(i, w, 0, Qt.AlignmentFlag.AlignHCenter)
+                self.lay.insertWidget(i + off, w, 0, Qt.AlignmentFlag.AlignHCenter)
         self.shown = list(target)
         self._update_footer()
         if anchor and anchor in self.widgets:
