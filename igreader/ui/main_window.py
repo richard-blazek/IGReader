@@ -144,7 +144,7 @@ class MainWindow(QMainWindow):
             forget_avatar(self.store.profile_pic(acc.username))
             it.setIcon(QIcon(avatar(self.store.profile_pic(acc.username), 28)))
             it.setData(Qt.ItemDataRole.UserRole, acc.username)
-            last = (QDateTime.fromSecsSinceEpoch(acc.last_refresh_at).toString("yyyy-MM-dd HH:mm")
+            last = (QDateTime.fromSecsSinceEpoch(acc.last_refresh_at).toString("d MMMM yyyy HH:mm")
                     if acc.last_refresh_at else "never")
             tip = [acc.full_name, f"{n} posts cached" + (" (full history)" if acc.history_complete else ""),
                    f"Last checked: {last}"]

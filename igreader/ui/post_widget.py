@@ -104,7 +104,7 @@ class PostWidget(QFrame):
         handle.setCursor(Qt.CursorShape.PointingHandCursor)
         handle.setStyleSheet("font-weight:600; text-align:left; padding:0 4px;")
         handle.clicked.connect(lambda: self.authorClicked.emit(post.username))
-        when = QDateTime.fromSecsSinceEpoch(post.taken_at).toString("yyyy-MM-dd  HH:mm")
+        when = QDateTime.fromSecsSinceEpoch(post.taken_at).toString("d MMMM yyyy  HH:mm")
         date = QLabel(when)
         date.setStyleSheet("color:#888;")
         head.addWidget(pic)
