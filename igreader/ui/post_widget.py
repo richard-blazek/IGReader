@@ -4,9 +4,10 @@ from __future__ import annotations
 import html
 import re
 from pathlib import Path
+from typing import Callable
 
-from PySide6.QtCore import QDateTime, QSize, Qt, Signal
-from PySide6.QtGui import QBrush, QPainter, QPainterPath, QPixmap
+from PySide6.QtCore import QDateTime, QSize, Qt, QUrl, Signal
+from PySide6.QtGui import QBrush, QDesktopServices, QPainter, QPainterPath, QPixmap
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
 
 from ..store import Post
@@ -14,7 +15,8 @@ from .media_viewer import WIDTH, MediaViewer
 
 _avatar_cache: dict[tuple[str, int], QPixmap] = {}
 
-URL_RE = re.compile(r"(https?://[^\s<]+)|(?<![\w@])@([A-Za-z0-9._]{1,30})|(?<![\w#])#(\w+)")
+URL_RE = re.compile(r"(https?://[^\s<]+)|(?<![\w@])@([A-Za-z0-9._]{1,30})")
+ACCOUNT_LINK = "igreader-account:"  # href prefix of mentions of tracked accounts, opened in the app
 
 
 def avatar(path: Path, size: int) -> QPixmap:
@@ -56,20 +58,29 @@ def _breakable(text: str) -> str:
     return html.escape(_LONG_RE.sub(split, text))
 
 
-def caption_html(text: str) -> str:
+def caption_html(text: str, tracked: Callable[[str], bool]) -> str:
+    """Rich text with clickable web links and mentions of tracked accounts (tracked(username),
+    lowercase); other mentions and hashtags stay plain text."""
     out, pos = [], 0
     for m in URL_RE.finditer(text):
+        url, user = m.groups()
+        if user and not tracked(user.lower()):
+            continue
         out.append(_breakable(text[pos:m.start()]))
-        url, user, tag = m.groups()
         if url:
             out.append(f'<a href="{html.escape(url)}">{_breakable(url)}</a>')
-        elif user:
-            out.append(f'<a href="https://www.instagram.com/{user}/">@{html.escape(user)}</a>')
         else:
-            out.append(f'<a href="https://www.instagram.com/explore/tags/{html.escape(tag)}/">#{html.escape(tag)}</a>')
+            out.append(f'<a href="{ACCOUNT_LINK}{html.escape(user.lower())}">@{html.escape(user)}</a>')
         pos = m.end()
     out.append(_breakable(text[pos:]))
     return "".join(out).replace("\n", "<br>")
+
+
+def open_link(href: str, open_account: Callable[[str], None]) -> None:
+    if href.startswith(ACCOUNT_LINK):
+        open_account(href[len(ACCOUNT_LINK):])
+    else:
+        QDesktopServices.openUrl(QUrl(href))
 
 
 class CaptionLabel(QLabel):
@@ -87,7 +98,7 @@ class CaptionLabel(QLabel):
 class PostWidget(QFrame):
     authorClicked = Signal(str)
 
-    def __init__(self, post: Post, account_dir: Path, parent=None):
+    def __init__(self, post: Post, account_dir: Path, tracked: Callable[[str], bool], parent=None):
         super().__init__(parent)
         self.post = post
         self.setObjectName("post")
@@ -124,10 +135,10 @@ class PostWidget(QFrame):
         lay.addLayout(head)
         lay.addWidget(self.media)
         if post.caption:
-            cap = CaptionLabel(caption_html(post.caption))
+            cap = CaptionLabel(caption_html(post.caption, tracked))
             cap.setTextFormat(Qt.TextFormat.RichText)
             cap.setWordWrap(True)
-            cap.setOpenExternalLinks(True)
+            cap.linkActivated.connect(lambda href: open_link(href, self.authorClicked.emit))
             cap.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
             cap.setContentsMargins(10, 4, 10, 0)
             cap.setFixedWidth(WIDTH)

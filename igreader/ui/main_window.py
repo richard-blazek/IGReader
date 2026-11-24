@@ -15,7 +15,7 @@ from ..store import Store
 from ..worker import Worker
 from .dialogs import parse_handle
 from .feed_view import FeedView
-from .post_widget import avatar, caption_html, forget_avatar
+from .post_widget import avatar, caption_html, forget_avatar, open_link
 
 ALL = "\x00all"
 STARTUP_REFRESH_HOURS = 6  # on start / reopen, check accounts not checked for this long
@@ -58,7 +58,7 @@ class MainWindow(QMainWindow):
         self.bio = QLabel()
         self.bio.setTextFormat(Qt.TextFormat.RichText)
         self.bio.setWordWrap(True)
-        self.bio.setOpenExternalLinks(True)
+        self.bio.linkActivated.connect(lambda href: open_link(href, self.select_account))
         self.bio.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
         top = QHBoxLayout()
         top.addWidget(self.bio, 1)
@@ -191,7 +191,8 @@ class MainWindow(QMainWindow):
     def _show_bio(self):
         u = self.current_username()
         acc = self.store.account(u) if u else None
-        parts = [caption_html(acc.biography)] if acc and acc.biography else []
+        tracked = lambda name: self.store.account(name) is not None  # noqa: E731
+        parts = [caption_html(acc.biography, tracked)] if acc and acc.biography else []
         parts += [f'<a href="{html.escape(url)}">{html.escape(url)}</a>' for url in (acc.bio_links if acc else [])]
         self.bio.setText("<br>".join(parts))
 

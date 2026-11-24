@@ -101,7 +101,8 @@ class FeedView(QScrollArea):
             w = self.widgets.get(sc)
             if w is None:
                 post = by_sc[sc]
-                w = PostWidget(post, self.store.account_dir(post.username))
+                w = PostWidget(post, self.store.account_dir(post.username),
+                               lambda u: self.store.account(u) is not None)
                 w.authorClicked.connect(self.authorClicked)
                 self.widgets[sc] = w
                 self.lay.insertWidget(i, w, 0, Qt.AlignmentFlag.AlignHCenter)
