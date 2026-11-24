@@ -138,7 +138,7 @@ class MainWindow(QMainWindow):
         it.setFont(f)
         self.list.addItem(it)
         select = 0
-        for acc in self.store.accounts():
+        for acc in sorted(self.store.accounts(), key=lambda a: a.username.casefold()):
             n = len(self.store.account_posts(acc.username))
             it = QListWidgetItem(f"@{acc.username}")
             forget_avatar(self.store.profile_pic(acc.username))
