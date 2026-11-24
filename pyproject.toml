@@ -5,7 +5,7 @@ description = "Desktop viewer for posts of selected public Instagram accounts, w
 requires-python = ">=3.11"
 dependencies = [
     "PySide6>=6.7",
-    "instaloader>=4.16,<4.17",
+    "instaloader>=4.16,<5",  # auto-updated within this range, see igreader/updater.py
     "requests",
 ]
 

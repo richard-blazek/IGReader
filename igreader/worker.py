@@ -13,7 +13,7 @@ from typing import Optional
 from PySide6.QtCore import QThread, Signal
 
 from .fetcher import AccountGone, Fetcher
-from .ig_client import AnonClient, IGError
+from .ig_client import CODE_ERRORS, AnonClient, IGError
 from .store import Store
 from .throttle import Cancelled, Throttle
 
@@ -40,6 +40,8 @@ class Worker(QThread):
     cooldownChanged = Signal()
     idle = Signal(bool)
     accountAdded = Signal(str)
+    jobSucceeded = Signal()  # a job talked to Instagram without error
+    codeError = Signal(str)  # our code / instaloader mismatch (not Instagram pushback)
 
     def __init__(self, store: Store, fake: bool = False):
         super().__init__()
@@ -188,10 +190,15 @@ class Worker(QThread):
             self._handle_error(job, e)
         except Exception as e:  # noqa: BLE001
             log.error("job %s failed:\n%s", job, traceback.format_exc())
-            self._handle_error(job, IGError("other", f"{type(e).__name__}: {e}"))
+            self._handle_error(job, IGError("other", f"{type(e).__name__}: {e}",
+                                            code_error=isinstance(e, CODE_ERRORS)))
+        else:
+            self.jobSucceeded.emit()
 
     def _handle_error(self, job: Job, e: IGError) -> None:
         log.warning("job %s %s: %s (%s)", job.kind, job.username, e, e.kind)
+        if e.code_error:
+            self.codeError.emit(str(e))
         if e.kind == "block":
             if job.kind != "add" or not self.store.cooldown_until():
                 until = self.store.start_cooldown(str(e))

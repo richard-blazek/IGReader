@@ -71,9 +71,15 @@ class IGError(Exception):
     account (profile missing/private), unavailable (one post can't be shown logged out),
     paused (cooldown active), other."""
 
-    def __init__(self, kind: str, message: str):
+    def __init__(self, kind: str, message: str, code_error: bool = False):
         super().__init__(message)
         self.kind = kind
+        # Our code and the installed instaloader don't fit together (AttributeError, TypeError, ...)
+        # rather than Instagram answering unexpectedly. Used to roll back an instaloader update.
+        self.code_error = code_error
+
+
+CODE_ERRORS = (AttributeError, TypeError, NameError, ImportError)
 
 
 class Client(Protocol):
@@ -183,7 +189,7 @@ def classify(err: BaseException) -> IGError:
         return IGError("block", f"Instagram returned an unexpected page (possibly rate limited): {msg}")
     if isinstance(err, ex.QueryReturnedBadRequestException):
         return IGError("block", f"Instagram rejected a request (400): {msg}")
-    return IGError("other", f"{type(err).__name__}: {msg}")
+    return IGError("other", f"{type(err).__name__}: {msg}", code_error=isinstance(err, CODE_ERRORS))
 
 
 def _timeline_connection(resp: dict) -> dict:
@@ -197,6 +203,7 @@ def _timeline_connection(resp: dict) -> dict:
 
 
 PAGINATION_DOC_ID = "28904005159232689"  # PolarisLoggedOutDesktopWWWProfilePostsTabContentQuery (instaloader 4.16)
+PAGE_LENGTH = 12
 FIRST_PAGE_TTL = 600
 
 
@@ -295,20 +302,17 @@ class AnonClient:
             return self._to_page(cached[1])
         if not acc.page_id:
             raise IGError("other", f"Missing page id for @{username}")
-        from instaloader.nodeiterator import NodeIterator
-        it = NodeIterator(
-            context=self.ctx,
-            query_hash=None,
-            edge_extractor=_timeline_connection,
-            node_wrapper=lambda n: n,
-            query_variables={"id": acc.page_id, "__relay_internal__pv__PolarisSEOIsCrawlerrelayprovider": False},
-            query_referer=f"https://www.instagram.com/{username}/",
-            first_data={"edges": [], "page_info": {}},  # no request on construction
-            doc_id=PAGINATION_DOC_ID,
-            web_api=True,
-        )
-        conn = self._call(lambda: it._query(after=cursor), f"@{username} posts page cursor={cursor[:16]}…")
-        return self._to_page(conn)
+        variables = {
+            "id": acc.page_id,
+            "__relay_internal__pv__PolarisSEOIsCrawlerrelayprovider": False,
+            # pagination, as instaloader's NodeIterator sends it
+            "after": cursor, "before": None, "first": PAGE_LENGTH, "last": None,
+        }
+        resp = self._call(
+            lambda: self.ctx.doc_id_graphql_query(PAGINATION_DOC_ID, variables,
+                                                  f"https://www.instagram.com/{username}/", web_api=True),
+            f"@{username} posts page cursor={cursor[:16]}…")
+        return self._to_page(_timeline_connection(resp))
 
     def fetch_post(self, shortcode: str) -> RawPost:
         """Full post data from its public page (instagram.com/p/<code>/), which embeds it.
@@ -348,3 +352,33 @@ class AnonClient:
             raise IGError("network", f"Network error downloading media: {e}") from e
         finally:
             tmp.unlink(missing_ok=True)
+
+
+def self_check() -> None:
+    """Offline check that the installed instaloader still offers everything AnonClient uses.
+    Raises on any incompatibility (run after an instaloader update, see updater.py)."""
+    import inspect
+
+    import instaloader
+    import instaloader.exceptions as ex
+    from instaloader.instaloadercontext import InstaloaderContext, RateController
+
+    def params(fn) -> set[str]:
+        return set(inspect.signature(fn).parameters)
+
+    need_init = {"quiet", "user_agent", "max_connection_attempts", "iphone_support", "download_pictures",
+                 "download_videos", "download_video_thumbnails", "download_geotags", "download_comments",
+                 "save_metadata", "rate_controller"}
+    missing = need_init - params(instaloader.Instaloader.__init__)
+    assert not missing, f"Instaloader() lacks {missing}"
+    assert {"doc_id", "variables", "referer", "web_api"} <= params(InstaloaderContext.doc_id_graphql_query)
+    assert {"path"} <= params(InstaloaderContext.get_page_data)
+    assert {"secs"} <= params(RateController.sleep)
+    assert {"query_type"} <= params(RateController.handle_429)
+    for name in ("ProfileNotExistsException", "PrivateProfileNotFollowedException",
+                 "QueryReturnedNotFoundException", "TooManyRequestsException", "AbortDownloadException",
+                 "LoginRequiredException", "ConnectionException", "BadResponseException",
+                 "QueryReturnedBadRequestException"):
+        assert isinstance(getattr(ex, name), type), name
+    c = AnonClient(Throttle(scale=0))  # no network access on construction
+    assert not c.ctx.is_logged_in and c.ctx.user_agent

@@ -47,6 +47,20 @@ The background checks are kept modest:
 * never during a cooldown or while other fetching is running, and never older history;
 * same pacing as any other refresh (one request at a time, 5–12 s apart, 20–60 s between accounts).
 
+## instaloader updates
+
+Instaloader does the actual requests and follows Instagram's changes, so the app keeps it up to
+date by itself (within `>=4.16,<5`, inside `.venv` only):
+
+* once a day, when online and idle, `pip install --upgrade` (PyPI only, no Instagram traffic);
+* a new version must pass an offline self-check (`ig_client.self_check()`), else it's rolled back;
+* the app then restarts itself while hidden and idle; if the first fetch crashes because the new
+  version doesn't fit the app's code, it's rolled back again and never installed again;
+* everything is logged to `igreader.log` (`igreader.update`).
+
+IGReader's own Instagram-specific parts (the pagination query id, the JSON field names in
+`ig_client.py`) are not covered by this and need a code change if Instagram changes them.
+
 ## Data (`~/.local/share/igreader/`)
 
     state.json, accounts.json, igreader.log

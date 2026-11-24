@@ -390,3 +390,129 @@ def test_autostart_entry(tmp_path, monkeypatch):
     assert "--background" in text and "Exec=" in text
     background.install_autostart()  # idempotent
     assert background.autostart_file().read_text() == text
+
+
+# --- instaloader updates -------------------------------------------------------------------
+
+def test_self_check_passes_with_installed_instaloader():
+    from igreader.ig_client import self_check
+    self_check()
+
+
+class FakeSignal:
+    def __init__(self):
+        self.slots = []
+
+    def connect(self, fn):
+        self.slots.append(fn)
+
+    def emit(self, *a):
+        for fn in self.slots:
+            fn(*a)
+
+
+class UpdWorker:
+    def __init__(self):
+        self.pending = set()
+        self.codeError = FakeSignal()
+        self.jobSucceeded = FakeSignal()
+
+
+class FakePip:
+    """Simulates `python -c version`, `pip install` and the self-check subprocesses."""
+
+    def __init__(self, installed, latest, check_ok=True):
+        self.installed, self.latest, self.check_ok = installed, latest, check_ok
+        self.cmds = []
+
+    def __call__(self, cmd):
+        self.cmds.append(cmd)
+        if "pip" in cmd:
+            req = cmd[-1]
+            if "==" in req:
+                self.installed = req.split("==")[1]
+            elif f"!={self.latest}" not in req:
+                self.installed = self.latest
+            return 0, ""
+        if "self_check" in cmd[-1]:
+            return (0, "") if self.check_ok else (1, "AssertionError")
+        return 0, self.installed
+
+
+@pytest.fixture
+def upd(tmp_path, monkeypatch):
+    from PySide6.QtCore import QCoreApplication
+    from igreader import updater
+    QCoreApplication.instance() or QCoreApplication([])
+    monkeypatch.setattr(updater, "can_self_update", lambda: None)
+
+    class SyncThread:  # run the update synchronously
+        def __init__(self, target, daemon):
+            self.target = target
+
+        def start(self):
+            self.target()
+    monkeypatch.setattr(updater.threading, "Thread", SyncThread)
+
+    def make(pip, now=1_000_000.0):
+        store = Store(tmp_path)
+        clock = {"t": now}
+        restarts = []
+        u = updater.Updater(store, UpdWorker(), can_restart=lambda: True, restart=lambda: restarts.append(1),
+                            now=lambda: clock["t"], online=lambda: True, runner=pip)
+        return store, u, clock, restarts
+    return make
+
+
+def _tick_after(u, clock, secs):
+    from PySide6.QtCore import QCoreApplication
+    clock["t"] += secs
+    u.tick()
+    QCoreApplication.processEvents()
+
+
+def test_update_installs_verifies_and_restarts(upd):
+    from igreader import updater
+    pip = FakePip("4.16", "4.17")
+    store, u, clock, restarts = upd(pip)
+    u.start()
+    _tick_after(u, clock, 60)
+    assert not any("pip" in c for c in pip.cmds)  # not right after start
+    _tick_after(u, clock, updater.FIRST_CHECK_AFTER)
+    assert pip.installed == "4.17"
+    assert store.state["updates"]["trial"] == {"old": "4.16", "new": "4.17"}
+    assert restarts == [1]
+    u.worker.jobSucceeded.emit()
+    assert "trial" not in store.state["updates"]
+    n = len(pip.cmds)
+    _tick_after(u, clock, 3600)
+    assert len(pip.cmds) == n  # once a day only
+
+
+def test_update_failing_self_check_is_rolled_back_and_skipped(upd):
+    from igreader import updater
+    pip = FakePip("4.16", "4.17", check_ok=False)
+    store, u, clock, restarts = upd(pip)
+    u.start()
+    _tick_after(u, clock, updater.FIRST_CHECK_AFTER + 1)
+    assert pip.installed == "4.16" and store.state["updates"]["bad"] == ["4.17"]
+    assert restarts == [] and "trial" not in store.state["updates"]
+    assert u.spec().endswith(",!=4.17")
+
+
+def test_update_rolled_back_on_code_error_during_trial(upd):
+    pip = FakePip("4.17", "4.17")
+    store, u, clock, restarts = upd(pip)
+    store.state["updates"] = {"trial": {"old": "4.16", "new": "4.17"}}
+    u.start()
+    u.worker.codeError.emit("AttributeError: x")
+    from PySide6.QtCore import QCoreApplication
+    QCoreApplication.processEvents()
+    assert pip.installed == "4.16" and store.state["updates"]["bad"] == ["4.17"]
+    assert restarts == [1]
+
+
+def test_code_errors_are_flagged():
+    from igreader.ig_client import classify
+    assert classify(AttributeError("x")).code_error
+    assert not classify(IGError("block", "429")).code_error

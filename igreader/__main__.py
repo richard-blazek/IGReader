@@ -61,11 +61,23 @@ def main() -> int:
 
     server.newConnection.connect(on_connection)
 
-    if not fake:
-        install_autostart()
     scheduler = BackgroundScheduler(store, worker, started_hidden=hidden, parent=app)
     worker.start()
     scheduler.start()
+    if not fake:
+        from .updater import Updater
+        install_autostart()
+
+        def restart():
+            """Replace this process with a fresh hidden instance (loads an updated instaloader)."""
+            worker.shutdown()
+            server.close()
+            logging.shutdown()
+            os.execv(sys.executable, [sys.executable, "-m", "igreader", "--background"])
+
+        updater = Updater(store, worker, parent=app, restart=restart,
+                          can_restart=lambda: not win.isVisible() and not worker.pending)
+        updater.start()
     if hidden:
         win.hidden_since_start = True
     else:
